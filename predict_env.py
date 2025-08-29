@@ -8,7 +8,6 @@ class PredictEnv:
         self.model_type = model_type
 
     def _termination_fn(self, env_name, obs, act, next_obs):
-        # TODO
         if env_name == "Hopper-v2":
             assert len(obs.shape) == len(next_obs.shape) == len(act.shape) == 2
 
@@ -48,6 +47,9 @@ class PredictEnv:
             done = ~not_done
             done = done[:, None]
             return done
+        elif 'HalfCheetah' in env_name:
+            batch_size = obs.shape[0]
+            return np.zeros(shape=(batch_size, 1), dtype=np.bool) # HalfCheetah never terminates
 
     def _get_logprob(self, x, means, variances):
 
@@ -75,44 +77,58 @@ class PredictEnv:
             return_single = False
 
         inputs = np.concatenate((obs, act), axis=-1)
-        if self.model_type == 'pytorch':
-            ensemble_model_means, ensemble_model_vars = self.model.predict(inputs)
+        
+        if self.model_type == 'LNN': # (0828 KSH - LNN based transition model)
+            rewards, next_obs = self.model.predict(inputs, factored=True) # return as numpy
+            terminals = self._termination_fn(self.env_name, obs, act, next_obs)
+
+            if return_single:
+                next_obs = next_obs[0]
+                rewards = rewards[0]
+                terminals = terminals[0]
+            
+            info = {}
+
         else:
-            ensemble_model_means, ensemble_model_vars = self.model.predict(inputs, factored=True)
-        ensemble_model_means[:, :, 1:] += obs
-        ensemble_model_stds = np.sqrt(ensemble_model_vars)
+            if self.model_type == 'pytorch':
+                ensemble_model_means, ensemble_model_vars = self.model.predict(inputs)            
+            else:
+                ensemble_model_means, ensemble_model_vars = self.model.predict(inputs, factored=True)
+            ensemble_model_means[:, :, 1:] += obs
+            ensemble_model_stds = np.sqrt(ensemble_model_vars)
 
-        if deterministic:
-            ensemble_samples = ensemble_model_means
-        else:
-            ensemble_samples = ensemble_model_means + np.random.normal(size=ensemble_model_means.shape) * ensemble_model_stds
+            if deterministic:
+                ensemble_samples = ensemble_model_means
+            else:
+                ensemble_samples = ensemble_model_means + np.random.normal(size=ensemble_model_means.shape) * ensemble_model_stds
 
-        num_models, batch_size, _ = ensemble_model_means.shape
-        if self.model_type == 'pytorch':
-            model_idxes = np.random.choice(self.model.elite_model_idxes, size=batch_size)
-        else:
-            model_idxes = self.model.random_inds(batch_size)
-        batch_idxes = np.arange(0, batch_size)
+            num_models, batch_size, _ = ensemble_model_means.shape
+            if self.model_type == 'pytorch':
+                model_idxes = np.random.choice(self.model.elite_model_idxes, size=batch_size)
+            else:
+                model_idxes = self.model.random_inds(batch_size)
+            batch_idxes = np.arange(0, batch_size)
 
-        samples = ensemble_samples[model_idxes, batch_idxes]
-        model_means = ensemble_model_means[model_idxes, batch_idxes]
-        model_stds = ensemble_model_stds[model_idxes, batch_idxes]
+            samples = ensemble_samples[model_idxes, batch_idxes]
+            model_means = ensemble_model_means[model_idxes, batch_idxes]
+            model_stds = ensemble_model_stds[model_idxes, batch_idxes]
 
-        log_prob, dev = self._get_logprob(samples, ensemble_model_means, ensemble_model_vars)
+            log_prob, dev = self._get_logprob(samples, ensemble_model_means, ensemble_model_vars)
 
-        rewards, next_obs = samples[:, :1], samples[:, 1:]
-        terminals = self._termination_fn(self.env_name, obs, act, next_obs)
+            rewards, next_obs = samples[:, :1], samples[:, 1:]
+            terminals = self._termination_fn(self.env_name, obs, act, next_obs)
 
-        batch_size = model_means.shape[0]
-        return_means = np.concatenate((model_means[:, :1], terminals, model_means[:, 1:]), axis=-1)
-        return_stds = np.concatenate((model_stds[:, :1], np.zeros((batch_size, 1)), model_stds[:, 1:]), axis=-1)
+            batch_size = model_means.shape[0]
+            return_means = np.concatenate((model_means[:, :1], terminals, model_means[:, 1:]), axis=-1)
+            return_stds = np.concatenate((model_stds[:, :1], np.zeros((batch_size, 1)), model_stds[:, 1:]), axis=-1)
 
-        if return_single:
-            next_obs = next_obs[0]
-            return_means = return_means[0]
-            return_stds = return_stds[0]
-            rewards = rewards[0]
-            terminals = terminals[0]
+            if return_single:
+                next_obs = next_obs[0]
+                return_means = return_means[0]
+                return_stds = return_stds[0]
+                rewards = rewards[0]
+                terminals = terminals[0]
 
-        info = {'mean': return_means, 'std': return_stds, 'log_prob': log_prob, 'dev': dev}
+            info = {'mean': return_means, 'std': return_stds, 'log_prob': log_prob, 'dev': dev}
+
         return next_obs, rewards, terminals, info

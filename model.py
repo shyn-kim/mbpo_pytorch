@@ -200,7 +200,7 @@ class EnsembleDynamicsModel():
         self.ensemble_model = EnsembleModel(state_size, action_size, reward_size, network_size, hidden_size, use_decay=use_decay)
         self.scaler = StandardScaler()
 
-    def train(self, inputs, labels, batch_size=256, holdout_ratio=0., max_epochs_since_update=5):
+    def train(self, inputs, labels, batch_size=256, holdout_ratio=0., max_epochs_since_update=5, writer=None):
         self._max_epochs_since_update = max_epochs_since_update
         self._epochs_since_update = 0
         self._state = {}
@@ -222,6 +222,7 @@ class EnsembleDynamicsModel():
         holdout_inputs = holdout_inputs[None, :, :].repeat([self.network_size, 1, 1])
         holdout_labels = holdout_labels[None, :, :].repeat([self.network_size, 1, 1])
 
+        print("\n[ Transition model update ] started...")
         for epoch in itertools.count():
 
             train_idx = np.vstack([np.random.permutation(train_inputs.shape[0]) for _ in range(self.network_size)])
@@ -244,8 +245,14 @@ class EnsembleDynamicsModel():
                 self.elite_model_idxes = sorted_loss_idx[:self.elite_size].tolist()
                 break_train = self._save_best(epoch, holdout_mse_losses)
                 if break_train:
-                    break
-            # print('epoch: {}, holdout mse losses: {}'.format(epoch, holdout_mse_losses))
+                    if writer is not None:
+                        writer.add_scalar(
+                            "model/final_holdout_mse",
+                            float(np.mean(holdout_mse_losses)),
+                            epoch,
+                        )
+                    print('[ Transition model update ] finished at epoch: {}, final holdout mse losses: {}\n'.format(epoch, holdout_mse_losses)) # (0828 KSH)
+                    break                
 
     def _save_best(self, epoch, holdout_losses):
         updated = False

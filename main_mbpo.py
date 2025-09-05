@@ -1,4 +1,5 @@
 import os, sys
+
 package_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(package_dir)
 
@@ -273,7 +274,7 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
     print("Exploring before start...")
     exploration_before_start(args, env_sampler, env_pool, agent)
 
-    for epoch_step in range(args.num_epoch):
+    for epoch in range(args.num_epoch):
         start_step = total_step
         train_policy_steps = 0
         for i in count():
@@ -289,7 +290,7 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
             ):
                 train_predict_model(args, env_pool, predict_env, writer)
 
-                new_rollout_length = set_rollout_length(args, epoch_step)
+                new_rollout_length = set_rollout_length(args, epoch)
                 if rollout_length != new_rollout_length:
                     rollout_length = new_rollout_length
                     model_pool = resize_model_pool(args, rollout_length, model_pool)
@@ -341,14 +342,14 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                 # logger.record_tabular("sum_reward", sum_reward)
                 # logger.dump_tabular()
                 # logging.info("Step Reward: " + str(total_step) + " " + str(sum_reward))
-                if writer is not None: # 0828 KSH: tensorboard logging
+                if writer is not None:  # 0828 KSH: tensorboard logging
                     writer.add_scalar("eval/return", sum_reward, total_step)
-                    writer.add_scalar("eval/epoch", epoch_step, total_step)
+                    # writer.add_scalar("eval/epoch", epoch, total_step)
                 print(
-                    f"==================================================================================[Epoch {epoch_step} / Step {total_step}] return = {sum_reward}"
+                    f"==================================================================================[Epoch {epoch+1} / Step {total_step}] return = {sum_reward}"
                 )
 
-    if writer is not None: # 0828 KSH
+    if writer is not None:  # 0828 KSH
         writer.close()
 
 
@@ -372,7 +373,10 @@ def set_rollout_length(args, epoch_step):
     return int(rollout_length)
 
 
-def train_predict_model(args, env_pool, predict_env, writer:SummaryWriter=None): # 0828 KSH: added writer
+def train_predict_model(
+    args, env_pool, predict_env, mainloop_step, writer: SummaryWriter = None 
+):  # 0828 KSH: added writer
+    # 0905 KSH: added mainloop_step
     # Get all samples from environment
     state, action, reward, next_state, done = env_pool.sample(len(env_pool))
     delta_state = next_state - state
@@ -381,10 +385,12 @@ def train_predict_model(args, env_pool, predict_env, writer:SummaryWriter=None):
         (np.reshape(reward, (reward.shape[0], -1)), delta_state), axis=-1
     )
 
-    batch_size = args.model_train_batch_size if hasattr(args, "model_train_batch_size") else 256 # 0828
+    batch_size = (
+        args.model_train_batch_size if hasattr(args, "model_train_batch_size") else 256
+    )  # 0828
     predict_env.model.train(
-        inputs, labels, batch_size=batch_size, holdout_ratio=0.2, writer=writer
-    )  # 0828 KSH: added writer
+        inputs, labels, mainloop_step=mainloop_step, batch_size=batch_size, holdout_ratio=0.2, writer=writer
+    )  # 0828 KSH: added writer / 0905 KSH: added mainloop_step
 
 
 def resize_model_pool(args, rollout_length, model_pool):
@@ -407,7 +413,7 @@ def rollout_model(args, predict_env, agent, model_pool, env_pool, rollout_length
     )
 
     # (0828 KSH) For CUDA memory - split samples
-    split_size = 250 # 500 hits memory capacity
+    split_size = 250  # 500 hits memory capacity
     for i in range(rollout_length):
         if state.shape[0] == 0:
             break
@@ -526,17 +532,17 @@ def train_policy_repeats(
             cur_step % 100 == 0 and i == args.num_train_repeat - 1
         ):  # (0828 KSH: logging)
             if writer is not None:
-                    global_step = total_step * args.num_train_repeat + i  # monotonic step
+                global_step = total_step * args.num_train_repeat + i  # monotonic step
 
-                    writer.add_scalar("sac/qf1_loss", float(qf1_loss), global_step)
-                    writer.add_scalar("sac/qf2_loss", float(qf2_loss), global_step)
-                    writer.add_scalar("sac/policy_loss", float(policy_loss), global_step)
-                    writer.add_scalar("sac/alpha_loss", float(alpha_loss), global_step)
-                    writer.add_scalar("sac/alpha", float(alpha_tlogs), global_step)
+                writer.add_scalar("sac/qf1_loss", float(qf1_loss), global_step)
+                writer.add_scalar("sac/qf2_loss", float(qf2_loss), global_step)
+                writer.add_scalar("sac/policy_loss", float(policy_loss), global_step)
+                writer.add_scalar("sac/alpha_loss", float(alpha_loss), global_step)
+                writer.add_scalar("sac/alpha", float(alpha_tlogs), global_step)
 
-                    # (Optional) mix ratio for visibility
-                    writer.add_scalar("sac/real_ratio", float(args.real_ratio), global_step)
-                    
+                # (Optional) mix ratio for visibility
+                writer.add_scalar("sac/real_ratio", float(args.real_ratio), global_step)
+
             print(
                 f"[ SAC Agent Update (cur_step {cur_step}) ]\n "
                 + f"qf1_loss = {qf1_loss:.4f} | "

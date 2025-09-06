@@ -288,7 +288,7 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                 and cur_step % args.model_train_freq == 0
                 and args.real_ratio < 1.0
             ):
-                train_predict_model(args, env_pool, predict_env, writer)
+                train_predict_model(args, env_pool, predict_env, total_step, writer)
 
                 new_rollout_length = set_rollout_length(args, epoch)
                 if rollout_length != new_rollout_length:

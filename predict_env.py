@@ -78,7 +78,7 @@ class PredictEnv:
 
         inputs = np.concatenate((obs, act), axis=-1)
         
-        if self.model_type == 'LNN': # (0828 KSH - LNN based transition model)
+        if 'LNN' in self.model_type: # (0828 KSH - LNN based transition model) (0911 KSH - modified to accept 'LNN' and 'LNN_ensemble')
             rewards, next_obs = self.model.predict(inputs, factored=True) # return as numpy
             terminals = self._termination_fn(self.env_name, obs, act, next_obs)
 

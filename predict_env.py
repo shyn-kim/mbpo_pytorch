@@ -50,6 +50,20 @@ class PredictEnv:
         elif 'HalfCheetah' in env_name:
             batch_size = obs.shape[0]
             return np.zeros(shape=(batch_size, 1), dtype=np.bool) # HalfCheetah never terminates
+        elif 'Ant' in env_name: # 0916 KSH
+            healthy_z_min, healthy_z_max =(0.2, 1.0)
+            if next_obs.shape[-1] == 105:
+                next_z = next_obs[:,0]
+            else:
+                next_z = next_obs[:,2]
+
+            not_done = (next_z <= healthy_z_max) * (next_z >= healthy_z_min) * np.isfinite(next_obs).all(axis=-1)
+            done = ~ not_done
+            done = done[:, None]
+            return done
+        else: # default (never terminates)
+            batch_size = obs.shape[0]
+            return np.zeros(shape=(batch_size, 1), dtype=np.bool)
 
     def _get_logprob(self, x, means, variances):
 
@@ -77,7 +91,7 @@ class PredictEnv:
             return_single = False
 
         inputs = np.concatenate((obs, act), axis=-1)
-        
+
         if 'LNN' in self.model_type: # (0828 KSH - LNN based transition model) (0911 KSH - modified to accept 'LNN' and 'LNN_ensemble')
             rewards, next_obs = self.model.predict(inputs, factored=True) # return as numpy
             terminals = self._termination_fn(self.env_name, obs, act, next_obs)
@@ -86,7 +100,7 @@ class PredictEnv:
                 next_obs = next_obs[0]
                 rewards = rewards[0]
                 terminals = terminals[0]
-            
+
             info = {}
 
         else:

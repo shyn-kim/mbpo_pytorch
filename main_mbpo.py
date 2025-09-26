@@ -302,7 +302,7 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                 print(f"[ Rollout ] finished")
 
             cur_state, action, next_state, reward, done, info = env_sampler.sample(
-                agent
+                agent, exclude_xy_pos=args.manually_exclude_xy_pos  # (0923 KSH)
             )
             env_pool.push(cur_state, action, reward, next_state, done)
 
@@ -327,26 +327,51 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                 logging.info("Step Reward: " + str(total_step) + " " + str(env_sampler.path_rewards[-1]) + " " + str(avg_reward))
                 print(total_step, env_sampler.path_rewards[-1], avg_reward)
                 """
-                env_sampler.current_state = None
-                sum_reward = 0
-                done = False
-                test_step = 0
+                # env_sampler.current_state = None
+                # sum_reward = 0
+                # done = False
+                # test_step = 0
 
-                while (not done) and (test_step != args.max_path_length):
-                    cur_state, action, next_state, reward, done, info = (
-                        env_sampler.sample(agent, eval_t=True)
-                    )
-                    sum_reward += reward
-                    test_step += 1
-                # logger.record_tabular("total_step", total_step)
-                # logger.record_tabular("sum_reward", sum_reward)
-                # logger.dump_tabular()
-                # logging.info("Step Reward: " + str(total_step) + " " + str(sum_reward))
+                # while (not done) and (test_step != args.max_path_length):
+                #     cur_state, action, next_state, reward, done, info = (
+                #         env_sampler.sample(agent, eval_t=True)
+                #     )
+                #     sum_reward += reward
+                #     test_step += 1
+                # # logger.record_tabular("total_step", total_step)
+                # # logger.record_tabular("sum_reward", sum_reward)
+                # # logger.dump_tabular()
+                # # logging.info("Step Reward: " + str(total_step) + " " + str(sum_reward))
+
+                # 0923 evaluation fix
+                env = env_sampler.env
+                ep_r_list = []
+                for episode in range(args.eval_episode):
+                    o, _ = env.reset()
+                    if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH - manual exclusion: x, y pos)
+                        o = np.delete(o, [0, 1], axis=0)
+                    ep_r = 0
+                    while True:
+                        with torch.no_grad():
+                            a = agent.select_action(o, eval=True)
+                        next_state, reward, term, trunc, info = env.step(a)
+                        ep_r += reward
+                        o=next_state
+                        if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH - manual exclusion: x, y pos)
+                            o = np.delete(o, [0, 1], axis=0)
+                        done=term or trunc
+                        if done:
+                            ep_r_list.append(ep_r)
+                            break
+                    
+                avg_return = np.mean(ep_r_list)
+
                 if writer is not None:  # 0828 KSH: tensorboard logging
-                    writer.add_scalar("eval/return", sum_reward, total_step)
+                    writer.add_scalar("eval/return", avg_return, total_step)
+                    # writer.add_scalar("eval/return", sum_reward, total_step)
                     # writer.add_scalar("eval/epoch", epoch, total_step)
                 print(
-                    f"==================================================================================[Epoch {epoch+1} / Step {total_step}] return = {sum_reward}"
+                    f"==================================================================================[Epoch {epoch+1} / Step {total_step}] return = {avg_return}"
                 )
 
     if writer is not None:  # 0828 KSH
@@ -354,8 +379,10 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
 
 
 def exploration_before_start(args, env_sampler, env_pool, agent):
+    exclude_xy_pos = True if args.env_name == "Ant-v5" else False  # (0923 KSH)
+
     for i in range(args.init_exploration_steps):
-        cur_state, action, next_state, reward, done, info = env_sampler.sample(agent)
+        cur_state, action, next_state, reward, done, info = env_sampler.sample(agent, exclude_xy_pos=exclude_xy_pos)  # (0923 KSH)
         env_pool.push(cur_state, action, reward, next_state, done)
 
 
@@ -424,7 +451,13 @@ def rollout_model(args, predict_env, agent, model_pool, env_pool, rollout_length
             end = min(start + split_size, n)
 
             s_chunk = state[start:end]  # (M, obs_dim)
-            a_chunk = agent.select_action(s_chunk)  # (M, act_dim), returns NumPy
+
+            if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH - manual exclusion: x, y pos)
+                s_exc_chunk = np.delete(s_chunk, [0, 1], axis=1)
+            else:
+                s_exc_chunk = s_chunk
+
+            a_chunk = agent.select_action(s_exc_chunk)  # (M, act_dim), returns NumPy
             ns_chunk, r_chunk, term_chunk, info = predict_env.step(s_chunk, a_chunk)
             # ns_chunk: (M, obs_dim), r_chunk: (M, 1) or (M,), term_chunk: (M, 1) or (M,)
 
@@ -493,10 +526,20 @@ def train_policy_repeats(
             int(env_batch_size)
         )
 
+        if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH)
+            env_state = np.delete(env_state, [0, 1], axis=1)
+            env_next_state = np.delete(env_next_state, [0, 1], axis=1)
+
         if model_batch_size > 0 and len(model_pool) > 0:
             model_state, model_action, model_reward, model_next_state, model_done = (
                 model_pool.sample_all_batch(int(model_batch_size))
             )
+
+            # 0923 manual exclusion: x, y pos (Ant-v5) / while giving x,y to nominal
+            if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH)
+                model_state = np.delete(model_state, [0, 1], axis=1)
+                model_next_state = np.delete(model_next_state, [0, 1], axis=1)
+
             batch_state, batch_action, batch_reward, batch_next_state, batch_done = (
                 np.concatenate((env_state, model_state), axis=0),
                 np.concatenate((env_action, model_action), axis=0),
@@ -521,6 +564,8 @@ def train_policy_repeats(
         batch_reward, batch_done = np.squeeze(batch_reward), np.squeeze(batch_done)
         batch_done = (~batch_done).astype(int)
         # (0828 KSH: obtain return values)
+        # print("state batch shape:", batch_state.shape)
+        # print("action batch shape:", batch_action.shape)
         qf1_loss, qf2_loss, policy_loss, alpha_loss, alpha_tlogs = (
             agent.update_parameters(
                 (batch_state, batch_action, batch_reward, batch_next_state, batch_done),

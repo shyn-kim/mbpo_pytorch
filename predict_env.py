@@ -110,9 +110,11 @@ class PredictEnv:
         if (
             "LNN" in self.model_type
         ):  # (0828 KSH - LNN based transition model) (0911 KSH - modified to accept 'LNN' and 'LNN_ensemble')
-            rewards, next_obs, _, _ = self.model.predict(
+            rewards, pred_obs, _, _ = self.model.predict(
                 inputs, factored=True
             )  # return as numpy
+
+            next_obs = pred_obs + obs if self.model.wm_predict_delta else pred_obs
             terminals = self._termination_fn(self.env_name, obs, act, next_obs)
 
             if return_single:

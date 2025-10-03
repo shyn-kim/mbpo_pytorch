@@ -27,6 +27,8 @@ from tf_models.constructor import construct_model, format_samples_for_training
 # (0828 KSH) Tensorboard logger
 from torch.utils.tensorboard import SummaryWriter
 
+import imageio
+
 
 def readParser():
     parser = argparse.ArgumentParser(description="MBPO")
@@ -348,7 +350,9 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                 ep_r_list = []
                 for episode in range(args.eval_episode):
                     o, _ = env.reset()
-                    if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH - manual exclusion: x, y pos)
+                    if (
+                        args.env_name == "Ant-v5" and args.manually_exclude_xy_pos
+                    ):  # (0923 KSH - manual exclusion: x, y pos)
                         o = np.delete(o, [0, 1], axis=0)
                     ep_r = 0
                     while True:
@@ -356,20 +360,37 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                             a = agent.select_action(o, eval=True)
                         next_state, reward, term, trunc, info = env.step(a)
                         ep_r += reward
-                        o=next_state
-                        if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH - manual exclusion: x, y pos)
+                        o = next_state
+                        if (
+                            args.env_name == "Ant-v5" and args.manually_exclude_xy_pos
+                        ):  # (0923 KSH - manual exclusion: x, y pos)
                             o = np.delete(o, [0, 1], axis=0)
-                        done=term or trunc
+                        done = term or trunc
                         if done:
                             ep_r_list.append(ep_r)
                             break
-                    
+
                 avg_return = np.mean(ep_r_list)
 
                 if writer is not None:  # 0828 KSH: tensorboard logging
                     writer.add_scalar("eval/return", avg_return, total_step)
                     # writer.add_scalar("eval/return", sum_reward, total_step)
                     # writer.add_scalar("eval/epoch", epoch, total_step)
+
+                # 0929 store agent checkpoint
+                if (total_step / args.epoch_length) % 5 == 0:
+                    model_save_dir = args.rl_save_dir + "/models"
+                    os.makedirs(model_save_dir, exist_ok=True)
+                    actor_path = model_save_dir + "/actor.pth"
+                    critic_path = model_save_dir + "/critic.pth"
+                    agent.save_model(
+                        env_name=args.env_name,
+                        actor_path=actor_path,
+                        critic_path=critic_path,
+                    )
+
+                    render_gif(args, agent, total_step)
+
                 print(
                     f"==================================================================================[Epoch {epoch+1} / Step {total_step}] return = {avg_return}"
                 )
@@ -378,11 +399,77 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
         writer.close()
 
 
+def render_gif(args, agent: SAC, mainloop_step):
+    os.environ["MUJOCO_GL"] = "egl"
+    if "MUJOCO_GL" in os.environ:
+        print(os.getenv("MUJOCO_GL"))
+        print(os.getenv("PYOPENGL_PLATFORM"))
+
+    if args.env_name == "Ant-v5":
+        env = gym.make(
+            args.env_name,
+            exclude_current_positions_from_observation=False,
+            include_cfrc_ext_in_observation=args.include_cfrc,
+            forward_reward_weight=args.forward_reward_weight,  # default 1.0
+            ctrl_cost_weight=args.ctrl_cost_weight,  # default 0.5
+            contact_cost_weight=args.contact_cost_weight,  # optional
+            healthy_reward=args.healthy_reward,  # optional
+            render_mode="rgb_array",
+        )
+    else:
+        env = gym.make(
+            args.env_name,
+            exclude_current_positions_from_observation=False,
+            render_mode="rgb_array",
+        )
+
+    frames = []
+    seed = 0
+    obs, info = env.reset(seed=seed)
+
+    episode_reward = 0
+    episode_length = 0
+    done = False
+
+    while not done:
+        frame = env.render()
+        frames.append(frame)
+
+        if args.manually_exclude_xy_pos:
+            obs_exc = obs[2:]
+        else:
+            obs_exc = obs
+
+        action = agent.select_action(obs_exc, eval=True)
+
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
+        episode_reward += reward
+        episode_length += 1
+
+        if done:
+            print(f"Episode reward {episode_reward}, length {episode_length}")
+            break
+
+    save_dir = args.rl_save_dir + "/rendering/"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    gif_name = os.path.join(
+        save_dir, f"{args.env_name}_{mainloop_step}step__reward:{episode_reward}.gif"
+    )
+    imageio.mimsave(gif_name, frames, fps=20)
+
+    env.close()
+
+
 def exploration_before_start(args, env_sampler, env_pool, agent):
     exclude_xy_pos = True if args.env_name == "Ant-v5" else False  # (0923 KSH)
 
     for i in range(args.init_exploration_steps):
-        cur_state, action, next_state, reward, done, info = env_sampler.sample(agent, exclude_xy_pos=exclude_xy_pos)  # (0923 KSH)
+        cur_state, action, next_state, reward, done, info = env_sampler.sample(
+            agent, exclude_xy_pos=exclude_xy_pos
+        )  # (0923 KSH)
         env_pool.push(cur_state, action, reward, next_state, done)
 
 
@@ -401,7 +488,7 @@ def set_rollout_length(args, epoch_step):
 
 
 def train_predict_model(
-    args, env_pool, predict_env, mainloop_step, writer: SummaryWriter = None 
+    args, env_pool, predict_env, mainloop_step, writer: SummaryWriter = None
 ):  # 0828 KSH: added writer
     # 0905 KSH: added mainloop_step
     # Get all samples from environment
@@ -416,8 +503,14 @@ def train_predict_model(
         args.model_train_batch_size if hasattr(args, "model_train_batch_size") else 256
     )  # 0828
     predict_env.model.train(
-        inputs, labels, mainloop_step=mainloop_step, batch_size=batch_size, holdout_ratio=0.2, writer=writer
-    )  # 0828 KSH: added writer / 0905 KSH: added mainloop_step
+        inputs,
+        labels,
+        mainloop_step=mainloop_step,
+        batch_size=batch_size,
+        holdout_ratio=0.2,
+        writer=writer,
+        scale=args.scale_data, 
+    )  # 0828 KSH: added writer / 0905 KSH: added mainloop_step / 0930: scale data
 
 
 def resize_model_pool(args, rollout_length, model_pool):
@@ -452,7 +545,9 @@ def rollout_model(args, predict_env, agent, model_pool, env_pool, rollout_length
 
             s_chunk = state[start:end]  # (M, obs_dim)
 
-            if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH - manual exclusion: x, y pos)
+            if (
+                args.env_name == "Ant-v5" and args.manually_exclude_xy_pos
+            ):  # (0923 KSH - manual exclusion: x, y pos)
                 s_exc_chunk = np.delete(s_chunk, [0, 1], axis=1)
             else:
                 s_exc_chunk = s_chunk
@@ -526,7 +621,7 @@ def train_policy_repeats(
             int(env_batch_size)
         )
 
-        if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH)
+        if args.env_name == "Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH)
             env_state = np.delete(env_state, [0, 1], axis=1)
             env_next_state = np.delete(env_next_state, [0, 1], axis=1)
 
@@ -536,7 +631,7 @@ def train_policy_repeats(
             )
 
             # 0923 manual exclusion: x, y pos (Ant-v5) / while giving x,y to nominal
-            if args.env_name=="Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH)
+            if args.env_name == "Ant-v5" and args.manually_exclude_xy_pos:  # (0923 KSH)
                 model_state = np.delete(model_state, [0, 1], axis=1)
                 model_next_state = np.delete(model_next_state, [0, 1], axis=1)
 
@@ -579,14 +674,17 @@ def train_policy_repeats(
             if writer is not None:
                 global_step = total_step * args.num_train_repeat + i  # monotonic step
 
-                writer.add_scalar("sac/qf1_loss", float(qf1_loss), global_step)
-                writer.add_scalar("sac/qf2_loss", float(qf2_loss), global_step)
+                # writer.add_scalar("sac/qf1_loss", float(qf1_loss), global_step)
+                # writer.add_scalar("sac/qf2_loss", float(qf2_loss), global_step)
+                writer.add_scalar(
+                    "sac/avg_qf_loss", float(qf1_loss + qf2_loss) / 2, global_step
+                )
                 writer.add_scalar("sac/policy_loss", float(policy_loss), global_step)
                 writer.add_scalar("sac/alpha_loss", float(alpha_loss), global_step)
                 writer.add_scalar("sac/alpha", float(alpha_tlogs), global_step)
 
                 # (Optional) mix ratio for visibility
-                writer.add_scalar("sac/real_ratio", float(args.real_ratio), global_step)
+                # writer.add_scalar("sac/real_ratio", float(args.real_ratio), global_step)
 
             print(
                 f"[ SAC Agent Update (cur_step {cur_step}) ]\n "

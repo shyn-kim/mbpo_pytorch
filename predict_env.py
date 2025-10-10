@@ -97,7 +97,7 @@ class PredictEnv:
 
         return log_prob, stds
 
-    def step(self, obs, act, deterministic=False):
+    def step(self, obs, act, deterministic=False, scale=False):
         if len(obs.shape) == 1:
             obs = obs[None]
             act = act[None]
@@ -111,7 +111,7 @@ class PredictEnv:
             "LNN" in self.model_type
         ):  # (0828 KSH - LNN based transition model) (0911 KSH - modified to accept 'LNN' and 'LNN_ensemble')
             rewards, pred_obs, _, _ = self.model.predict(
-                inputs, factored=True
+                inputs, factored=True, scale=scale
             )  # return as numpy
 
             next_obs = pred_obs + obs if self.model.wm_predict_delta else pred_obs

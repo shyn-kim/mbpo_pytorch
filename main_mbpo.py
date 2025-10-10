@@ -553,7 +553,7 @@ def rollout_model(args, predict_env, agent, model_pool, env_pool, rollout_length
                 s_exc_chunk = s_chunk
 
             a_chunk = agent.select_action(s_exc_chunk)  # (M, act_dim), returns NumPy
-            ns_chunk, r_chunk, term_chunk, info = predict_env.step(s_chunk, a_chunk)
+            ns_chunk, r_chunk, term_chunk, info = predict_env.step(s_chunk, a_chunk, scale=args.scale_data)
             # ns_chunk: (M, obs_dim), r_chunk: (M, 1) or (M,), term_chunk: (M, 1) or (M,)
 
             # Push this chunk to the model buffer

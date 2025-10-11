@@ -2,8 +2,12 @@
 import gymnasium as gym  # (0828 KSH)
 import numpy as np
 
+from gymnasium import Env as gymEnv
+from dm_control.rl.control import Environment as dmcEnv
+
+
 class EnvSampler:
-    def __init__(self, env, max_path_length=1000):
+    def __init__(self, env: gymEnv | dmcEnv, max_path_length=1000):
         self.env = env
 
         self.path_length = 0
@@ -12,12 +16,17 @@ class EnvSampler:
         self.path_rewards = []
         self.sum_reward = 0
 
-    def sample(self, agent, eval_t=False, exclude_xy_pos=False): # (0923 KSH - added exclude_xy_pos)
+    def sample(
+        self, agent, eval_t=False, exclude_xy_pos=False
+    ):  # (0923 KSH - added exclude_xy_pos)
         if self.current_state is None:
             # self.current_state = self.env.reset()
-            self.current_state, _ = (
-                self.env.reset()
-            )  # (0828 KSH - gymnasium API)
+            try:
+                self.current_state, _ = self.env.reset()  # (0828 KSH - gymnasium API)
+            except Exception:
+                self.current_state = (
+                    self.env.reset()
+                )  # 1011 - exception for dm_control API
 
         cur_state = self.current_state
 
@@ -28,13 +37,21 @@ class EnvSampler:
 
         action = agent.select_action(exc_cur_state, eval_t)
         # next_state, reward, terminal, info = self.env.step(action)
-        next_state, reward, term, trunc, info = self.env.step(
-            action
-        )  # (0828 KSH - gymnasium API)
+        if isinstance(self.env, gymEnv):
+            next_state, reward, term, trunc, info = self.env.step(
+                action
+            )  # (0828 KSH - gymnasium API)
+            terminal = term or trunc
+        if isinstance(self.env, dmcEnv):
+            ts = self.env.step(action)  # 1011 - exception for dm_control API
+            # next_state = np.concat([ts.observation["position"], ts.observation["velocity"]])
+            next_state = np.concat([v for v in ts.observation.values()])
+            reward = ts.reward
+            terminal = ts.last()
+            info = {}
+
         self.path_length += 1
         self.sum_reward += reward
-
-        terminal = term or trunc  # (0828 KSH - gymnasium API)
 
         # TODO: Save the path to the env_pool
         if terminal or self.path_length >= self.max_path_length:

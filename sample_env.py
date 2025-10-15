@@ -21,12 +21,11 @@ class EnvSampler:
     ):  # (0923 KSH - added exclude_xy_pos)
         if self.current_state is None:
             # self.current_state = self.env.reset()
-            try:
+            if isinstance(self.env, gymEnv):
                 self.current_state, _ = self.env.reset()  # (0828 KSH - gymnasium API)
-            except Exception:
-                self.current_state = (
-                    self.env.reset()
-                )  # 1011 - exception for dm_control API
+            if isinstance(self.env, dmcEnv):
+                ts = self.env.reset()  # 1011 - exception for dm_control API
+                self.current_state = np.concat([v for v in ts.observation.values() if v.ndim > 0]) 
 
         cur_state = self.current_state
 
@@ -45,7 +44,7 @@ class EnvSampler:
         if isinstance(self.env, dmcEnv):
             ts = self.env.step(action)  # 1011 - exception for dm_control API
             # next_state = np.concat([ts.observation["position"], ts.observation["velocity"]])
-            next_state = np.concat([v for v in ts.observation.values()])
+            next_state = np.concat([v for v in ts.observation.values() if v.ndim > 0])
             reward = ts.reward
             terminal = ts.last()
             info = {}

@@ -8,9 +8,13 @@ import time
 
 # import gym
 import gymnasium as gym  # (0828 KSH)
+from dm_control import suite  # (1011 KSH)
 import torch
 import numpy as np
 from itertools import count
+
+from gymnasium import Env as gymEnv
+from dm_control.rl.control import Environment as dmcEnv
 
 import logging
 
@@ -349,7 +353,12 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                 env = env_sampler.env
                 ep_r_list = []
                 for episode in range(args.eval_episode):
-                    o, _ = env.reset()
+                    if isinstance(env, gymEnv):
+                        o, _ = env.reset()
+                    if isinstance(env, dmcEnv):
+                        ts = env.reset()
+                        o = np.concat([v for v in ts.observation.values() if v.ndim > 0])
+
                     if (
                         args.env_name == "Ant-v5" and args.manually_exclude_xy_pos
                     ):  # (0923 KSH - manual exclusion: x, y pos)
@@ -358,7 +367,17 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                     while True:
                         with torch.no_grad():
                             a = agent.select_action(o, eval=True)
-                        next_state, reward, term, trunc, info = env.step(a)
+                        if isinstance(env, gymEnv):
+                            next_state, reward, term, trunc, info = env.step(a)
+                        if isinstance(env, dmcEnv):
+                            ts = env.step(a)
+                            next_state = np.concat(
+                                [v for v in ts.observation.values() if v.ndim > 0]
+                            )
+                            reward = ts.reward
+                            term = ts.last()
+                            trunc = False
+                            info = {}
                         ep_r += reward
                         o = next_state
                         if (
@@ -389,7 +408,10 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                         critic_path=critic_path,
                     )
 
-                    render_gif(args, agent, total_step)
+                    if args.lib == "gym":
+                        render_gif_gym(args, agent, total_step)
+                    if args.lib == "dmc":
+                        render_gif_dmc(args, agent, total_step)
 
                 print(
                     f"==================================================================================[Epoch {epoch+1} / Step {total_step}] return = {avg_return}"
@@ -399,7 +421,7 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
         writer.close()
 
 
-def render_gif(args, agent: SAC, mainloop_step):
+def render_gif_gym(args, agent: SAC, mainloop_step):
     os.environ["MUJOCO_GL"] = "egl"
     if "MUJOCO_GL" in os.environ:
         print(os.getenv("MUJOCO_GL"))
@@ -462,6 +484,57 @@ def render_gif(args, agent: SAC, mainloop_step):
 
     env.close()
 
+def render_gif_dmc(args, agent: SAC, mainloop_step):
+    # (This should be done before importing dm control -> move to main script)
+    # os.environ["MUJOCO_GL"] = "egl"
+    # if "MUJOCO_GL" in os.environ:
+    #     print(os.getenv("MUJOCO_GL"))
+    #     print(os.getenv("PYOPENGL_PLATFORM"))
+
+    env = suite.load(args.env_name, args.dmc_task)
+
+    frames = []
+    seed = 0
+    time_step = env.reset()
+
+    obs = np.concat([v for v in time_step.observation.values() if v.ndim > 0])
+
+    episode_reward = 0
+    episode_length = 0
+    done = False
+
+    while not done:
+        frame = env.physics.render(camera_id=0, height=480, width=640)
+        frames.append(frame)
+
+        if args.manually_exclude_xy_pos:
+            obs_exc = obs[2:]
+        else:
+            obs_exc = obs
+
+        action = agent.select_action(obs_exc, eval=True)
+
+        time_step = env.step(action)
+
+        obs = np.concat([v for v in time_step.observation.values() if v.ndim > 0])
+        reward = time_step.reward
+        done = time_step.last()
+        episode_reward += reward
+        episode_length += 1
+
+        if done:
+            print(f"Episode reward {episode_reward}, length {episode_length}")
+            break
+
+    save_dir = args.rl_save_dir + "/rendering/"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    gif_name = os.path.join(
+        save_dir, f"{args.env_name}_{args.dmc_task}_{mainloop_step}step__reward:{episode_reward}.gif"
+    )
+    imageio.mimsave(gif_name, frames, fps=20)
+
 
 def exploration_before_start(args, env_sampler, env_pool, agent):
     exclude_xy_pos = True if args.env_name == "Ant-v5" else False  # (0923 KSH)
@@ -509,7 +582,6 @@ def train_predict_model(
         batch_size=batch_size,
         holdout_ratio=0.2,
         writer=writer,
-        scale=args.scale_data, 
     )  # 0828 KSH: added writer / 0905 KSH: added mainloop_step / 0930: scale data
 
 
@@ -553,7 +625,7 @@ def rollout_model(args, predict_env, agent, model_pool, env_pool, rollout_length
                 s_exc_chunk = s_chunk
 
             a_chunk = agent.select_action(s_exc_chunk)  # (M, act_dim), returns NumPy
-            ns_chunk, r_chunk, term_chunk, info = predict_env.step(s_chunk, a_chunk, scale=args.scale_data)
+            ns_chunk, r_chunk, term_chunk, info = predict_env.step(s_chunk, a_chunk)
             # ns_chunk: (M, obs_dim), r_chunk: (M, 1) or (M,), term_chunk: (M, 1) or (M,)
 
             # Push this chunk to the model buffer

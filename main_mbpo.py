@@ -447,7 +447,8 @@ def render_gif_gym(args, agent: SAC, mainloop_step):
 
     frames = []
     seed = 0
-    obs, info = env.reset(seed=seed)
+    # obs, info = env.reset(seed=seed)
+    obs, info = env.reset()
 
     episode_reward = 0
     episode_length = 0
@@ -491,7 +492,8 @@ def render_gif_dmc(args, agent: SAC, mainloop_step):
     #     print(os.getenv("MUJOCO_GL"))
     #     print(os.getenv("PYOPENGL_PLATFORM"))
 
-    env = suite.load(args.env_name, args.dmc_task)
+    seed = 0
+    env = suite.load(args.env_name, args.dmc_task, task_kwargs={"random": np.random.RandomState(seed)})
 
     frames = []
     seed = 0

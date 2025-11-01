@@ -567,7 +567,8 @@ def train_predict_model(
 ):  # 0828 KSH: added writer
     # 0905 KSH: added mainloop_step
     # Get all samples from environment
-    state, action, reward, next_state, done = env_pool.sample(len(env_pool))
+    # state, action, reward, next_state, done = env_pool.sample(len(env_pool))
+    state, action, reward, next_state, done = env_pool.sample(args.model_train_sample_size, recent=True)
     delta_state = next_state - state
     inputs = np.concatenate((state, action), axis=-1)
     labels = np.concatenate(

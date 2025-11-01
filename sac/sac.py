@@ -1,4 +1,10 @@
 import os
+import sys
+
+script_path = os.path.realpath(__file__)
+script_dir = os.path.dirname(os.path.dirname(script_path))
+sys.path.append(script_dir)
+
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam

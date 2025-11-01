@@ -27,10 +27,17 @@ class ReplayMemory:
             self.buffer[:len(batch) - len(self.buffer) + self.position] = batch[len(self.buffer) - self.position:]
             self.position = len(batch) - len(self.buffer) + self.position
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, recent=True):
         if batch_size > len(self.buffer):
             batch_size = len(self.buffer)
-        batch = random.sample(self.buffer, int(batch_size))
+            
+        # 1030
+        if recent:
+            batch = self.buffer[-batch_size:]
+            random.shuffle(batch)
+        else:
+            batch = random.sample(self.buffer, int(batch_size))
+
         state, action, reward, next_state, done = map(np.stack, zip(*batch))
         return state, action, reward, next_state, done
 

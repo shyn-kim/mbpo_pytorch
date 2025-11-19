@@ -8,6 +8,7 @@ import numpy as np
 import math
 import gzip
 import itertools
+import os, pickle
 
 device = torch.device('cuda')
 
@@ -188,7 +189,7 @@ class EnsembleModel(nn.Module):
 
 
 class EnsembleDynamicsModel():
-    def __init__(self, network_size, elite_size, state_size, action_size, reward_size=1, hidden_size=200, use_decay=False):
+    def __init__(self, network_size, elite_size, state_size, action_size, reward_size=1, hidden_size=200, use_decay=False, save_dir=None):
         self.network_size = network_size
         self.elite_size = elite_size
         self.model_list = []
@@ -199,6 +200,7 @@ class EnsembleDynamicsModel():
         self.elite_model_idxes = []
         self.ensemble_model = EnsembleModel(state_size, action_size, reward_size, network_size, hidden_size, use_decay=use_decay)
         self.scaler = StandardScaler()
+        self.save_dir = save_dir # 1115
 
     def train(self, inputs, labels, mainloop_step=0, batch_size=256, holdout_ratio=0., max_epochs_since_update=5, writer=None):
         # 0828 KSH: added writer
@@ -273,6 +275,19 @@ class EnsembleDynamicsModel():
         else:
             self._epochs_since_update += 1
         if self._epochs_since_update > self._max_epochs_since_update:
+            # save ensemble models and standard scaler
+            os.makedirs(self.save_dir, exist_ok=True)
+            torch.save(self.ensemble_model.state_dict(), os.path.join(self.save_dir,"ensemble_model.pth"))
+
+            std_scaler_dict = {
+                "mu": self.scaler.mu,
+                "std": self.scaler.std
+            }
+            with open(os.path.join(self.save_dir,"std_scaler_dict"), "wb") as f:
+                pickle.dump(std_scaler_dict, f)
+
+            print("Ensemble model saved.")
+
             return True
         else:
             return False

@@ -51,7 +51,7 @@ class PredictEnv:
         elif "HalfCheetah" in env_name:
             batch_size = obs.shape[0]
             return np.zeros(
-                shape=(batch_size, 1), dtype=np.bool
+                shape=(batch_size, 1), dtype=np.bool_
             )  # HalfCheetah never terminates
         elif "Ant" in env_name:  # 0916 KSH
             healthy_z_min, healthy_z_max = (0.2, 1.0)
@@ -70,7 +70,7 @@ class PredictEnv:
             return done
         else:  # default (never terminates)
             batch_size = obs.shape[0]
-            return np.zeros(shape=(batch_size, 1), dtype=np.bool)
+            return np.zeros(shape=(batch_size, 1), dtype=np.bool_)
 
     def _get_logprob(self, x, means, variances):
 

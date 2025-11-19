@@ -397,6 +397,7 @@ def train(args, env_sampler, predict_env, agent, env_pool, model_pool):
                     # writer.add_scalar("eval/epoch", epoch, total_step)
 
                 # 0929 store agent checkpoint
+                # 1113 store worldmodel
                 if (total_step / args.epoch_length) % 5 == 0:
                     model_save_dir = args.rl_save_dir + "/models"
                     os.makedirs(model_save_dir, exist_ok=True)
@@ -430,7 +431,7 @@ def render_gif_gym(args, agent: SAC, mainloop_step):
     if args.env_name == "Ant-v5":
         env = gym.make(
             args.env_name,
-            exclude_current_positions_from_observation=False,
+            exclude_current_positions_from_observation=True,
             include_cfrc_ext_in_observation=args.include_cfrc,
             forward_reward_weight=args.forward_reward_weight,  # default 1.0
             ctrl_cost_weight=args.ctrl_cost_weight,  # default 0.5
@@ -441,7 +442,7 @@ def render_gif_gym(args, agent: SAC, mainloop_step):
     else:
         env = gym.make(
             args.env_name,
-            exclude_current_positions_from_observation=False,
+            exclude_current_positions_from_observation=True,
             render_mode="rgb_array",
         )
 
@@ -539,7 +540,8 @@ def render_gif_dmc(args, agent: SAC, mainloop_step):
 
 
 def exploration_before_start(args, env_sampler, env_pool, agent):
-    exclude_xy_pos = True if args.env_name == "Ant-v5" else False  # (0923 KSH)
+    # exclude_xy_pos = True if args.env_name == "Ant-v5" else False  # (0923 KSH)
+    exclude_xy_pos = args.manually_exclude_xy_pos
 
     for i in range(args.init_exploration_steps):
         cur_state, action, next_state, reward, done, info = env_sampler.sample(
